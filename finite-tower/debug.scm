@@ -1,5 +1,40 @@
 
+
 #|
+
+INSTRUCTIONS 
+
+- DO NOT RUN THIS FILE UNDER EMACS + GEISER
+
+- RUN THIS FILE UNDER EMACS + M-x shell
+csi - chicken scheme
+guile - guile scheme
+
+then run
+(load "debug.scm")
+(rep)
+
+- if fall out of the interpreter because symbol not found
+just run
+(rep)
+
+(rep) will reload this-file and call the recursive repl
+
+
+meta interpreter
+
+missing features
+
+let
+let*
+letrec
+and
+or
+load
+
+
+how can we get code we write in the running interpreter to be realised in the underlying system.
+
 
 ultra vanilla scheme debugger - think R 4 R S 
 
@@ -58,6 +93,7 @@ no output ?
 
 (define this-file-name "debug.scm")
 
+(define stdin-port (current-input-port))
 
 (define global-env #f)
 
@@ -96,6 +132,7 @@ no output ?
 
 
 ;; try to splice new value into head of list ?
+;; internal defines inside top level define , really just letrec in disguise
 (define env-define
   (lambda (env sym val)
     (cond
@@ -141,22 +178,62 @@ no output ?
 ;; prefix ev - to mean evaluate own EVAL ...
 ;; TO DO - rewrite conditional? to ev-if?
 ;; TO DO - rewrite sequence? to ev-begin?
+;; TO DO - tidy this up , some things should be here ,
+;; some things should be elsewhere
+;; 
 (define evaluate
   (lambda (expr env cont)
     (cond
+
+     ;; end of file object thing ??
+     ((eof-object? expr) (cont expr))
+
+     ;; ??? 
      ((eq? expr '!!) (evaluate-reset expr env cont))
+
+     ;; ??? 
      ((eq? expr '!) (evaluate-quit expr env cont))
+
+     ;; 1  2.3  1+2i  3/4 
      ((number? expr) (evaluate-number expr env cont))
+
+     ;; #t and #f
      ((ev-bool? expr) (evaluate-boolean expr env cont))
+
+     ;; (quote *)
      ((quoted? expr) (evaluate-quoted expr env cont))
+     
+     ;; alpha
      ((symbol? expr) (evaluate-variable expr env cont))
+
+     ;; "hello"
      ((ev-string? expr) (evaluate-string expr env cont))
+
+     ;; define 
      ((definition? expr) (evaluate-define expr env cont))
+
+     ;; lambda 
      ((abstraction? expr) (evaluate-lambda expr env cont))
+
+     ;; set! 
      ((assignment? expr) (evaluate-set! expr env cont))
+
+     ;; if 
      ((conditional? expr) (evaluate-if expr env cont))
-     ((sequence? expr) (evaluate-sequence expr env cont))     
+
+     ;; sequence 
+     ((sequence? expr) (evaluate-sequence expr env cont))
+
+     ;; calll-with-current-continuation
+     ((ev-call/cc? expr) (ev-call/cc expr env cont))
+
+     ;; load a file 
+     ((ev-load? expr) (ev-load expr env cont))
+     
+     ;; application both primitive and compound expressions
      ((application? expr) (evaluate-application expr env cont))
+     
+     ;; hard fail , crashes system 
      (#t (display "ERROR : do not know how to evaluate this below ")
 	 (newline)
 	 (display "> ")
@@ -164,6 +241,82 @@ no output ?
 	 (newline)))))
 
 
+(define ev-load?
+  (lambda (expr)
+    (and (pair? expr) (eq? (car expr) 'load))))
+
+
+
+
+
+
+;; expr is just a list of files to load in order
+(define ev-load-recur
+  (lambda (expr env cont)
+    (cond
+     ((null? expr) (cont #t))
+     (#t (evaluate (car expr) env
+		   (lambda (fname)
+
+		     (newline)
+		     (display "loading file  ")
+		     (display fname)
+		     (display " ...")
+		     (newline)
+
+		     (with-input-from-file fname
+				      (lambda ()
+					(letrec ((foo (lambda ()
+							(let ((got (read)))
+							  (cond
+							   ((eof-object? got) (cont #f))
+							   (#t (display "got = ")
+							       (display got)
+							       (newline)
+							       (evaluate got env (lambda (egot)
+										   (foo)))))))))
+					  (foo))))))))))
+
+
+		     
+		     ;; (cont fname)))))))
+
+
+;; not even reading the file ??
+
+		     ;; (let ((port (open-input-file fname)))
+		     ;;   (lambda ()
+		     ;; 	 (let ((in (read port)))
+		     ;; 	   (newline)
+		     ;; 	   (display "load.in = ")
+		     ;; 	   (display in)
+		     ;; 	   (newline)
+		     ;; 	   (close-input-port port)
+		     ;; 	   (evaluate in env cont))))))))))
+
+			 ;;   (cont in))))))))))
+			 ;; 
+			 ;; 
+			 ;; ;; (letrec ((foo (lambda ()
+			 ;; ;; 		 (let ((got (read)))
+			 ;; ;; 		   (newline)
+			 ;; ;; 		   (display "load.got = ")
+			 ;; ;; 		   (display got)
+			 ;; ;; 		   (newline)
+			 ;; ;; 		   (cond
+			 ;; ;; 		    ((eof-object? got) (cont #f))
+			 ;; ;; 		    (#t (evaluate got env
+			 ;; ;; 				  (lambda (egot)
+			 ;; ;; 				    (foo)))))))))
+			 ;; ;;   (ev-load-recur (cdr expr) env cont))))))))))
+
+
+
+
+
+(define ev-load
+  (lambda (expr env cont)
+    (ev-load-recur (cdr expr) env cont)))
 
 
 
@@ -241,31 +394,31 @@ no output ?
 (define evaluate-set!
   (lambda (expr env cont)
 
-		  (newline)
-		  (display " evaluate-set!   ")
-		  (newline)
+    ;; (newline)
+    ;; (display " evaluate-set!   ")
+    ;; (newline)
     
     (let ((sym (car (cdr expr)))
 	  (uneval (car (cdr (cdr expr)))))
 
-      (newline)
-      (display " sym =   ")
-      (display sym)
-      (newline)
-      
-      (display "uneval =   ")
-      (display uneval)
-      (newline)
+      ;; (newline)
+      ;; (display " sym =   ")
+      ;; (display sym)
+      ;; (newline)
+      ;; 
+      ;; (display "uneval =   ")
+      ;; (display uneval)
+      ;; (newline)
             
       (evaluate uneval env 
 		(lambda (val)
 		  
-		  (newline)
-		  (display "   trying to set!   ")
-		  (display sym)
-		  (display " <- ")
-		  (display val)
-		  (newline)
+		  ;; (newline)
+		  ;; (display "   trying to set!   ")
+		  ;; (display sym)
+		  ;; (display " <- ")
+		  ;; (display val)
+		  ;; (newline)
 
 		  (let ((outcome (env-set! env sym val)))
 
@@ -279,11 +432,14 @@ no output ?
 		    (cond
 		     ((pair? outcome) (cont val))
 		     (#t
+		      
 		      (newline)
 		      (display "ERROR : no variable ")
 		      (display sym)
 		      (display " in environment to set.")
-		      (newline)))))))))
+		      (newline)
+		      
+		      ))))))))
 
 
 
@@ -348,13 +504,58 @@ no output ?
 (define (env-tie symbols values)  
   (map (lambda (x y) (list x y)) symbols values))
 
+;; lets try implement call/cc
+;; (call/cc (lambda (foo) ...))
+;; current continuation is bound to foo ?
+;; then evaluate ...
+;; if at any time foo is called then
+;; that becomes the value of entire expression
+
+(define ev-call/cc?
+  (lambda (expr)
+    (and (pair? expr) (eq? (car expr) 'call/cc))))
 
 
-;; (define ev-call/cc
-;;   (lambda (expr env cont)
-;;     (let ((lam (car (cdr expr))))
-;;       (evaluate lam env (lambda (val)
-;; 			  (
+;; ------------------- call/cc ------ is experimental ----------------------------
+;; (call/cc (lambda (foo) ...)
+;; need to extend environment with binding
+;;    ((foo ?)) env
+;; 
+;;     cont is a primitive procedure as far as programs running in the interpreter
+;;     if foo is called , 
+;; ((lambda (foo) ...) *something-special* )
+;; quite what call/cc is the *something-special* 
+;; so lambda foo , has same environment as call/cc
+;; since call/cc just escapes then the escape does not carry environment data with it 
+(define ev-call/cc
+  (lambda (expr env cont)
+    (let* ((lam (car (cdr expr)))
+	   (lam-sym (car (car (cdr lam))))
+	   (lam-body (cdr (cdr lam))))
+      (evaluate lam env
+		(lambda (elam)
+		  
+		    ;; (newline)
+		    ;; (display "call/cc symbol that captures continuation is = ")
+		    ;; (display lam-sym)
+		    ;; (newline)
+		    ;; 
+		    ;; (display "call/cc lambda body = ")
+		    ;; (display lam-body)
+		    ;; (newline)
+		    ;; 
+		    ;; (display "call/cc eval'd lambda = ")
+		    ;; (display elam)
+		    ;; (newline)		    
+
+		    ;; hand coding building a new binding in environment
+		    (let ((new-env (cons (list (list lam-sym (list 'primitive cont))) env)))
+		      (evaluate-implicit-sequence lam-body new-env
+						  (lambda (val2)
+						    (cont val2)))))))))
+
+
+
 
 
 ;; cfn - compound function
@@ -480,20 +681,33 @@ no output ?
   (display "in [")
   (display counter)
   (display "] : ")
-  
-  (let ((expr (read)))
+
+  ;; AHA -- need to be EXPLICIT what PORT reading from
+  ;; otherwise LOAD a file , REPL becomes attached to infinite stream of #eofs end of file
+  (let ((expr (read stdin-port)))
     ;; (display expr)
     ;; (newline)
-    (evaluate expr
-	      global-env
-	      (lambda (result)
-		(newline)
-		(display "out [")
-		(display counter)
-		(display "] : ")
-		(display result)
-		(newline)
-		(recur-repl (+ counter 1))))))
+    (cond
+     ;; eof in stdin is like END-OF_fILe ...
+     ;; exit - exits chicken scheme completely
+     ;;((eof-object? expr) (exit))
+     ((eof-object? expr) #f)
+     (#t 
+      (evaluate expr
+		global-env
+		(lambda (result)
+		  (newline)
+		  (display "out [")
+		  (display counter)
+		  (display "] : ")
+		  (display result)
+		  (newline)
+		  (recur-repl (+ counter 1))))))))
+
+
+
+
+
 
 
 
@@ -507,12 +721,22 @@ no output ?
 
 
 ;;
+;;
+;; how can we do a module system  ?
+;; exceptions ??
+;; unwind-protect 
+;;
 (set! primitive-env
   `((
      
      (car (primitive ,car))
      (cdr (primitive ,cdr))
      (cons (primitive ,cons))
+     (set-car! (primitive ,set-car!))
+     (set-cdr!  (primitive ,set-cdr!))
+
+     (equal? (primitive ,equal?))
+     
      (list (primitive ,list))
      (pair? (primitive ,pair?))
      (null? (primitive ,null?))
@@ -536,8 +760,10 @@ no output ?
      (write (primitive ,write))
      (read (primitive ,read))
      
-     (boolean? (primitive ,boolean?))
+     (boolean?  (primitive ,boolean?))
      (not (primitive ,not))
+
+     (eof-object? (primitive ,eof-object?))
      
      )))
 
@@ -545,29 +771,13 @@ no output ?
 (set! global-env primitive-env)
 
 
-
-
-(define fac
-  (lambda (n)
-    (if (< n 2) 1
-	(fac-iter n 1))))
-
-(define fac-iter
-  (lambda (n m)
-    (if (< n 2) m
-	(fac-iter (- n 1) (* n m)))))
-
-
-(define fib
-  (lambda (n)
-    (if (< n 3) 1
-	(+ (fib (- n 1))
-	   (fib (- n 2))))))
-
-
-
-
-
-
+;; (load "debug.scm")
+;; (rep)
+;;
+;; if somehow crash and fall out repl to underlying system 
+;; simply run (rep) again 
+;; any changes to debug.scm are reloaded when (rep) is called 
+;;
+;;
 
 
