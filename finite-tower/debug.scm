@@ -3,6 +3,11 @@
 
 ultra vanilla scheme debugger - think R 4 R S 
 
+ADVANTAGE TO OWN LANGUAGE
+( 1 )  (= 'a 'b)
+in normal scheme if A is not a number , then fails , rather would it not be better to return false #f
+?
+
 1 prefer ultra basic scheme procedures ??
 
 simple meta circular interpreter designed for debugging
@@ -50,6 +55,8 @@ no output ?
 
 
 |#
+
+(define this-file-name "debug.scm")
 
 
 (define global-env #f)
@@ -130,6 +137,10 @@ no output ?
 ;; a big block of code for evaluate is not really easy to alter inside itself
 ;; if we hand off to
 ;; how can we over-ride the "defaults"  ?
+
+;; prefix ev - to mean evaluate own EVAL ...
+;; TO DO - rewrite conditional? to ev-if?
+;; TO DO - rewrite sequence? to ev-begin?
 (define evaluate
   (lambda (expr env cont)
     (cond
@@ -143,7 +154,7 @@ no output ?
      ((definition? expr) (evaluate-define expr env cont))
      ((abstraction? expr) (evaluate-lambda expr env cont))
      ((assignment? expr) (evaluate-set! expr env cont))
-     ((conditional? expr) (evaluate-conditional expr env cont))
+     ((conditional? expr) (evaluate-if expr env cont))
      ((sequence? expr) (evaluate-sequence expr env cont))     
      ((application? expr) (evaluate-application expr env cont))
      (#t (display "ERROR : do not know how to evaluate this below ")
@@ -151,6 +162,8 @@ no output ?
 	 (display "> ")
 	 (write expr)
 	 (newline)))))
+
+
 
 
 
@@ -194,6 +207,7 @@ no output ?
 
 
 ;; wrap environment in a lambda so it does not spew into console when printed
+;; just a closure = expr + env 
 (define evaluate-lambda
   (lambda (expr env cont)
     (cont (list 'compound expr (lambda () env)))))
@@ -316,14 +330,81 @@ no output ?
 
 (define evaluate-application
   (lambda (expr env cont)
-    (evaluate-arguments (appl-operands expr) env '()
-			(lambda (args)
-			  (evaluate (appl-operator expr) env
-				    (lambda (op)
-				      (cond
-				       ((primitive? op) (cont (apply (car (cdr op)) args)))
-				       ((compound? op)
-					(cont "compound-application not implemented yet")))))))))
+    (let ((un-args (appl-operands expr)))
+      (evaluate-arguments un-args env '()
+			  (lambda (e-args)
+			    (evaluate (appl-operator expr) env
+				      (lambda (op)
+					(cond
+					 ((primitive? op) (cont (apply (car (cdr op)) e-args)))
+					 ((compound? op)
+					  (evaluate-compound op e-args env cont))))))))))
+
+
+;; make a new environment list
+;; which is cons'd onto original environment
+;;
+;; may need another list - wrapping this 
+(define (env-tie symbols values)  
+  (map (lambda (x y) (list x y)) symbols values))
+
+
+
+;; (define ev-call/cc
+;;   (lambda (expr env cont)
+;;     (let ((lam (car (cdr expr))))
+;;       (evaluate lam env (lambda (val)
+;; 			  (
+
+
+;; cfn - compound function
+;; un-args un-evaluated arguments ?
+;; e-args evaluated args ?
+;; env
+;; cont
+(define evaluate-compound
+  (lambda (cfn e-args env cont)
+    
+    ;; (newline)
+    ;; (display "cfn = ")
+    ;; (display cfn)
+    ;; (newline)
+    
+    (let* ((lam (car (cdr cfn)))
+	   (lam-args (car (cdr lam)))
+	   (lam-body (cdr (cdr lam)))
+	   (closure-env-delayed (car (cdr (cdr cfn))))
+	   )
+
+      ;; (newline)
+      ;; (display "lam = ")
+      ;; (display cfn)
+      ;; (newline)
+      ;; 
+      ;; (newline)
+      ;; (display "lam.args = ")
+      ;; (display lam-args)
+      ;; (newline)
+      ;; (display "e-args = ")
+      ;; (display e-args)
+      ;; (newline)
+      ;; 
+      ;; (newline)
+      ;; (display "lam.body = ")
+      ;; (display lam-body)
+      ;; (newline)
+
+      ;; for toplevel procedures , no need for closure since everything is in the global-env
+      ;; notice we call closure-env-delayed as there is an anon lambda no args holding
+      ;; closure environment safe from printing out .
+      (let ((new-env (cons (env-tie lam-args e-args) (closure-env-delayed))))
+	(evaluate-implicit-sequence lam-body
+				    new-env
+				    (lambda (result)
+				      (cont result)))))))
+    
+    
+
 
 
 (define evaluate-arguments
@@ -354,8 +435,6 @@ no output ?
     (and (pair? expr) (eq? (car expr) 'define))))
 
 
-
-
 ;; is this expression a quoted expression
 ;; scheme reader will turn 'a into (quote a )
 (define quoted?
@@ -379,7 +458,7 @@ no output ?
 ;; primitive expression - such as inbuilt from underlying scheme system
 (define primitive? (lambda (x) (and (pair? x) (eq? (car x) 'primitive))))
 
-;; compound expression 
+;; compound exprsession 
 (define compound? (lambda (x) (and (pair? x) (eq? (car x) 'compound))))
 
 
@@ -422,7 +501,10 @@ no output ?
 ;; debug levels
 ;; repl is predefined in some scheme environemnts
 (define (rep)
+  (load this-file-name)
+  (newline) (display "reloaded ") (display this-file-name) (newline)
   (recur-repl 0))
+
 
 ;;
 (set! primitive-env
@@ -435,6 +517,12 @@ no output ?
      (pair? (primitive ,pair?))
      (null? (primitive ,null?))
      
+     (> (primitive ,>))
+     (< (primitive ,<))
+     (>= (primitive ,>=))
+     (<= (primitive ,<=))
+     (= (primitive ,=))
+
      (+ (primitive ,+))
      (- (primitive ,-))
      (* (primitive ,*))
@@ -450,7 +538,6 @@ no output ?
      
      (boolean? (primitive ,boolean?))
      (not (primitive ,not))
-
      
      )))
 
@@ -459,6 +546,23 @@ no output ?
 
 
 
+
+(define fac
+  (lambda (n)
+    (if (< n 2) 1
+	(fac-iter n 1))))
+
+(define fac-iter
+  (lambda (n m)
+    (if (< n 2) m
+	(fac-iter (- n 1) (* n m)))))
+
+
+(define fib
+  (lambda (n)
+    (if (< n 3) 1
+	(+ (fib (- n 1))
+	   (fib (- n 2))))))
 
 
 
