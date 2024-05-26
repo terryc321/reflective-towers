@@ -2,6 +2,9 @@
 (import (chicken syntax))
 (import expand-full)
 (import (chicken pretty-print))
+(import (chicken format))
+(import srfi-69) ;; hash tables
+
 
 #|
 need some initial environment
@@ -36,18 +39,6 @@ mk = meta - continuation - lazily constructed stack of continuations
 (define second cadr)
 
 
-;; each environment is an assoc-list
-;; reason use lists is to build up 
-(define (lookup-value exp env cont fk)
-  (cond
-   ((null? env) (fk (list "expression not found in environment" exp env cont fk)))
-   (#t (let* ((ribs (car env))
-	      (pr (assoc exp ribs)))
-	 (cond
-	  (pr (cont (second pr)))
-	  (#t (lookup-value exp (cdr env) cont fk)))))))
-
-
 (define (lookup-binding exp env cont fk)
   (cond
    ((null? env) (fk (list "expression not found in environment" exp env cont fk)))
@@ -65,32 +56,192 @@ mk = meta - continuation - lazily constructed stack of continuations
   (newline))
 
 
+(define make-environment
+  (lambda (x)
+    (lambda () x)))
+
+
 ;; advantage of currying ?
 ;; does remembering everything cause huge space leak ??
 (define (evaluate exp env cont fk)
-  (let ((fk2 (lambda (err) (cons (list 'evaluated exp env cont)
-				 err))))
+  (let ((fk2 (lambda (err) (fk (cons (list 'evaluated exp (make-environment env) cont)
+				 err)))))
     (cond
      ((boolean? exp) (cont exp))
      ((number? exp) (cont exp))
      ((string? exp) (cont exp))
      ((vector? exp) (cont exp))
-     ((symbol? exp) (lookup-value exp env cont fk2))
+     ;; 
+     ((symbol? exp) (ev-symbol exp env cont fk2))
+     ;; (lambda (..) ...)
      ((ev-lambda? exp) (ev-lambda exp env cont fk2))
+     ;; (set! x y)
      ((ev-assign? exp) (ev-assign exp env cont fk2))
+     ;; (define f ...)
+     ;; (define (f x) ...)
      ((ev-define? exp) (ev-define exp env cont fk2))   
      ((ev-begin? exp) (ev-begin exp env cont fk2))   
      ((ev-quote? exp) (ev-quote exp env cont fk2))   
      ((ev-if? exp) (ev-if exp env cont fk2))
+     ;; (cond (test expr1 expr2) (test2 expr3 expr4 ..)..)
+     ((ev-cond? exp) (ev-cond exp env cont fk2))
+     ;; let  parallel let
+     ((ev-let? exp) (ev-let exp env cont fk2))
+     ;; let* sequential let
+     ((ev-let*? exp) (ev-let* exp env cont fk2))
+     ;; letrec 
+     ((ev-letrec? exp) (ev-letrec exp env cont fk2))
+     ;; 
+     ;; load 
      ((ev-load? exp) (ev-load exp env cont fk2))
      ((ev-quit? exp) 'quit)
-     ((ev-import? exp) (ev-import exp env cont fk2))
+     ((ev-import? exp) (ev-import exp env cont fk2))     
      (else
       (ev-application exp env cont fk2)))))
 
 
+;;----------------- letrec -------------------------
+;;
+;; turn (letrec ((foo (lambda ...))) ... body ... (foo))
+;; into (let ((foo #f)) (set! foo (lambda ..)) ... body ... (foo) )
+;;
+(define (ev-letrec? exp)
+  (and (pair? exp) (eq? (car exp) 'letrec)))
+
+(define (ev-letrec exp env cont fk)
+  (let* ((var-bods (car (cdr exp)))
+	 (body (cdr (cdr exp)))
+	 (vars (map car var-bods))
+	 (bods (map cdr var-bods))
+	 (falses (map (lambda (x) `(,x #f)) vars))
+	 (sets (map (lambda (x) (cons 'set! x)) var-bods)) ;; (set! foo (lambda ...))
+	 (macro-result `(let ,falses ,@sets ,@body)))
+    ;; (newline)
+    ;; (format #t "LETREC vars  -> ~a ~%" vars)    
+    ;; (format #t "LETREC in  -> ~a ~%" exp)
+    ;; (format #t "LETREC out -> ~a ~%" macro-result)
+    (evaluate macro-result     
+	      env
+	      cont
+	      fk)))
+
+
+
+;; ---------------- let* ---------------------------
+;; macro
+;; convert (let* ((a ...)(b...)(c...)) ...)
+;;  into  ((lambda (a) ...) (begin a..))
+(define (ev-let*? exp)
+  (and (pair? exp) (eq? (car exp) 'let*)))
+
+(define (recur-let* vars bods body)
+  (cond
+   ((null? (cdr vars))
+    (let ((var (car vars))
+	  (bod (car bods)))
+      `((lambda (,var) ,@body) ,bod)))
+   (#t
+    (let ((var (car vars))
+	  (bod (car bods))
+	  (other-vars (cdr vars))
+	  (other-bods (cdr bods)))
+      `((lambda (,var) ,(recur-let* other-vars other-bods body)) ,bod)))))
+
+
+(define (ev-let* exp env cont fk)
+  (let* ((var-bods (car (cdr exp)))
+	 (body (cdr (cdr exp)))
+	 (vars (map car var-bods))
+	 (bods (map cdr var-bods))
+	 (begin-bods (map (lambda (b) (cons 'begin b)) bods))
+	 (macro-result (recur-let* vars begin-bods body)))
+    ;; (newline)
+    ;; (format #t "LET* in  -> ~a ~%" exp)
+    ;; (format #t "LET* out -> ~a ~%" macro-result)
+    (evaluate macro-result     
+	      env
+	      cont
+	      fk)))
+
+
+
+
+
+;; ---------------- let ---------------------------
+;; macro
+;; convert (let ((a ...)(b...)(c...)) ...)
+;;  into  ((lambda (a b c) ...body...) (begin a..) (begin b..) (begin c..))
+(define (ev-let? exp)
+  (and (pair? exp) (eq? (car exp) 'let)))
+
+(define (ev-let exp env cont fk)
+  (let* ((var-bods (car (cdr exp)))
+	 (body (cdr (cdr exp)))
+	 (vars (map car var-bods))
+	 (bods (map cdr var-bods))
+	 (begin-bods (map (lambda (b) (cons 'begin b)) bods))
+	 (macro-result `((lambda ,vars ,@body) ,@begin-bods)))
+    (evaluate macro-result     
+	      env
+	      cont
+	      fk)))
+
+
+
+;; ----------- symbol lookup ------------------------
+(define (ev-symbol exp env cont fk)
+  (lookup-binding exp env (lambda (v) (cont (second v)))
+		  (lambda (err)
+		    (display "ev-symbol ERROR :[ ")
+		    (display exp)		    
+		    (display " ] : symbol not found in environment")
+		    (newline)
+		    (fk err))))
+
+
+
+
+;; ---------------- cond ---------------------------
+;; convert (cond ...) into (if ...)
+;; 
+(define (ev-cond? exp)
+  (and (pair? exp) (eq? (car exp) 'cond)))
+
+
+;; ;; allowed else keyword 
+;; (cond
+;;  (test1 ...)
+;;  (test2 ...)
+;;  (else ...))
+(define (ev-cond exp env cont fk)
+  (ev-cond-cases (cdr exp) env cont fk))
+
+(define (ev-cond-cases cases env cont fk)
+  (cond
+   ((null? cases) (cont (make-undefined)))
+   (#t (let* ((test-body (car cases))
+	      (test (car test-body))
+	      (body (cdr test-body)))
+	 (cond
+	  ((and (null? (cdr cases)) (eq? test 'else))
+	   (ev-sequence body (make-undefined) env cont fk))
+	  (#t
+	   (evaluate test env
+		     (lambda (v)
+		       (if v
+			   (ev-sequence body (make-undefined) env cont fk)
+			   (ev-cond-cases (cdr cases) env cont fk)))
+		     fk)))))))
+
+
+
+
+
+
 
 ;;; ----- theres no import in the upper interpreter yet --------
+;; not sure what import is supposed to do
+;; 
 (define (ev-import? exp)
   (and (pair? exp) (eq? (car exp) 'import)))
 
@@ -98,7 +249,7 @@ mk = meta - continuation - lazily constructed stack of continuations
   (let ((args (cdr exp)))
     (cont #t)))
 
-
+;; -------------load from a file -------------------------------
 (define (ev-load? exp)
   (and (pair? exp) (eq? (car exp) 'load)))
 
@@ -114,8 +265,13 @@ mk = meta - continuation - lazily constructed stack of continuations
       (evaluate in
 		   env
 		   (lambda (v)
+		     (newline)
+		     (display ">> ")
+		     (display v)
+		     (newline)		     
 		     (ev-load-seq port env cont fk))
 		   fk)))))
+
      
 
 (define (ev-load exp env cont fk)
@@ -226,6 +382,7 @@ if not careful end in an infinite loop
 					   (ev-compound-apply efun eargs env cont fk))))
 			       fk))
 		   fk)))
+
 
 
 (define (ev-lambda? exp)
@@ -384,11 +541,6 @@ if not careful end in an infinite loop
 	 (var (car args)))
     (cont var)))
 
-
-
-
-
-
 ;; interpreter repl 
 (define (r-e-p-l n level prompt env k fk)
   (newline)
@@ -414,12 +566,16 @@ if not careful end in an infinite loop
 		(display ">>?? Fail ")
 		(display " : ")
 		(display fail-val)
-		(d-e-b-u-g 1 level "DEBUG" env k fk)))))
+		;; give debugger way to escape back into repl where error
+		;; threw us into debugger and pretend we did not see the error...
+		(d-e-b-u-g 1 level "DEBUG" env (lambda (res)
+						 (r-e-p-l n level prompt env k fk))
+			   k fk)))))
 
 
 
 ;; debug repl 
-(define (d-e-b-u-g n level prompt env k fk)
+(define (d-e-b-u-g n level prompt env repl-k k fk)
   (newline)
   (display prompt)
   (display " ")
@@ -430,25 +586,33 @@ if not careful end in an infinite loop
   (let ((exp (read)))
     (display exp)
     (newline)
-    (evaluate exp env (lambda (val)
-			(display " ")
-			(display n)
-			(display " / ")
-			(display level)
-			(display " ")			
-		    (display ">> ")
-		    (display val)
-		    (d-e-b-u-g (+ n 1) level prompt env k fk))
-	      (lambda (fail-val)
-		(display ">>?? Fail ")
-		(display " : ")
-		(display fail-val)
-		(d-e-b-u-g 1 (+ 1 level) prompt env k fk)))))
+    ;; pre-empty
+    (cond
+     ((equal? exp '(unquote q))
+      (format #t "leaving debugger ~%")
+      (repl-k #t))
+     (#t ;; carry on in debugger 
+      (evaluate exp env (lambda (val)
+			  (display " ")
+			  (display n)
+			  (display " / ")
+			  (display level)
+			  (display " ")			
+			  (display ">> ")
+			  (display val)
+			  (d-e-b-u-g (+ n 1) level prompt env repl-k k fk))
+		(lambda (fail-val)
+		  (display ">>?? Fail ")
+		  (display " : ")
+		  (display fail-val)
+		  (d-e-b-u-g 1 (+ 1 level) prompt env repl-k k fk)))))))
 
 
 
+
+
+;; interpreter.scm should reload interpreter.scm
 (define (test)
-  ;; reloads this file every time ...
   (load "interpreter.scm") 
   (let ([n 1]
 	[level 1]
@@ -464,6 +628,7 @@ if not careful end in an infinite loop
 
 
 
+
 ;; all the stuff from the host environment
 ;; if something is a procedure - from host system for example - make it a primitive-procedure
 ;; if not - just a value and can be used as that
@@ -476,6 +641,20 @@ if not careful end in an infinite loop
 	     ((procedure? val) (list sym (make-primitive-procedure val)))
 	     (#t (list sym val)))))
 	(list
+	 (list 'number? number?)
+	 (list 'integer? integer?)
+	 ;; (list 'float? float?) ;; what is a float?
+	 (list 'rational? rational?)
+	 (list 'string? string?)
+	 (list 'vector? vector?)
+	 (list 'vector-ref vector-ref)
+	 (list 'vector-set! vector-set!)
+
+	 (list 'list? pair?)
+	 (list 'list-ref list-ref)
+	 (list 'set-car! set-car!)
+	 (list 'set-cdr! set-cdr!)
+	 
 	 (list '< <)
 	 (list '> >)
 	 (list '= =)
@@ -491,9 +670,22 @@ if not careful end in an infinite loop
 	 (list 'cons cons)
 	 (list 'car car)
 	 (list 'cdr cdr)
+	 (list 'caar caar)
+	 (list 'cadr cadr)
+	 (list 'cddr cddr)
+	 
 	 (list 'list list)
 	 (list 'reverse reverse)	 	 
+	 (list 'eq? eq?)
+	 (list 'equal? equal?)
+	 ;;(list 'map map) ;; cannot use higher order procedures
+	 (list 'format format)
+	 (list 'display display)
+	 (list 'newline newline)
 	 ))))
+
+
+
 
    
 
