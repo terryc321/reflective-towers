@@ -100,7 +100,31 @@
 (twice 5)
 
 ;; unfortunately (map twice '(1 2 3 4)) does not give '(2 4 6 8)
-;; 
+;;
+
+(define map
+  (lambda (f xs)
+    (cond
+     ((null? xs) xs)
+     (#t (cons (f (car xs))
+	       (map f (cdr xs)))))))
+
+(map twice '(1 2 3 4 ))
+
+(car '(1 2 3 4 5))
+
+(cdr '(1 2 3 4 5))
+
+(null? '())
+
+(null? '(1 2 3 4 5))
+
+;; append
+
+
+
+
+	      
 
 
 

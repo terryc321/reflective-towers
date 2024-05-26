@@ -5,33 +5,6 @@
 (import (chicken format))
 (import srfi-69) ;; hash tables
 
-
-#|
-need some initial environment
-need some way to access and mutate environment
-each new level gets a fresh environment so not 
-if level 1 clobbers some important definition
-that does leak into another level
-
-repl levels
-
-meta continuation is infinite stack
-
-up = reify - make manipulatable
-down = reflect - make executable 
-
-think about an interpreter running lisp code
- a debugger is similar to ordinary interpreter except it carries more stuff...
- ... debug information ...
-
-e r k mk
-e = expression
-r = environment rho
-k = continuation kappa
-mk = meta - continuation - lazily constructed stack of continuations
-
-|#
-
 ;; save original eval if ever need it again  
 (define original-eval eval)
 
@@ -646,6 +619,7 @@ if not careful end in an infinite loop
 	 ;; (list 'float? float?) ;; what is a float?
 	 (list 'rational? rational?)
 	 (list 'string? string?)
+	 
 	 (list 'vector? vector?)
 	 (list 'vector-ref vector-ref)
 	 (list 'vector-set! vector-set!)
@@ -654,6 +628,8 @@ if not careful end in an infinite loop
 	 (list 'list-ref list-ref)
 	 (list 'set-car! set-car!)
 	 (list 'set-cdr! set-cdr!)
+
+	 (list 'append append)
 	 
 	 (list '< <)
 	 (list '> >)
