@@ -1,9 +1,49 @@
+#|
+
+idea is have an interpreter which can load and run scheme code
+but can also alter how it works at run time
+
+possibly a reset feature may be a good idea
+
+think about eval
+(eval expression environment continuation)
+if expression is a boolean
+what if we wanted to know every time we evaluated a boolean
+
+tied by reader of underlying host system as to how text of the
+program is processed
+
+
+
+;; (define (eval exp env cont)
+;;  (cond
+;;   ((boolean? e) (meta-apply (lookup eval-boolean env) exp env cont))
+;; so we can change eval-boolean 
+;; what if we wanted to change eval itself ? 
+
+|#
+
 (import scheme)
+;; scheme ? no idea what it does
+
 (import (chicken syntax))
+;; chicken syntax again no idea what it does
+
 (import expand-full)
+;; expand-full is for expand* allows full macro expansion
+;; which is then amenable to pretty printing
+
 (import (chicken pretty-print))
+;; pp pretty print
+
 (import (chicken format))
-(import srfi-69) ;; hash tables
+;; chicken format a life saver
+;; ( format #t "hello world~%" )
+
+;;(import srfi-69) ;; hash tables ? never used ??
+
+;; -----------------------------------------------------------------
+
 
 ;; save original eval if ever need it again  
 (define original-eval eval)
@@ -32,6 +72,7 @@
 (define make-environment
   (lambda (x)
     (lambda () x)))
+
 
 
 ;; advantage of currying ?
@@ -67,7 +108,9 @@
      ;; 
      ;; load 
      ((ev-load? exp) (ev-load exp env cont fk2))
+     ;;  quits the interpreter completely
      ((ev-quit? exp) 'quit)
+     ;; 
      ((ev-import? exp) (ev-import exp env cont fk2))     
      (else
       (ev-application exp env cont fk2)))))

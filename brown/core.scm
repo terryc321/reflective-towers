@@ -1,40 +1,3 @@
-(import scheme)
-(import (chicken syntax))
-(import expand-full)
-(import (chicken pretty-print))
-
-#|
-need some initial environment
-need some way to access and mutate environment
-each new level gets a fresh environment so not 
-if level 1 clobbers some important definition
-that does leak into another level
-
-repl levels
-
-meta continuation is infinite stack
-
-up = reify - make manipulatable
-down = reflect - make executable 
-
-think about an interpreter running lisp code
- a debugger is similar to ordinary interpreter except it carries more stuff...
- ... debug information ...
-
-e r k mk
-e = expression
-r = environment rho
-k = continuation kappa
-mk = meta - continuation - lazily constructed stack of continuations
-
-|#
-
-;; save original eval if ever need it again  
-(define original-eval eval)
-
-(define first car)
-(define second cadr)
-
 
 ;; each environment is an assoc-list
 ;; reason use lists is to build up 
@@ -414,7 +377,7 @@ if not careful end in an infinite loop
 		(display ">>?? Fail ")
 		(display " : ")
 		(display fail-val)
-		(d-e-b-u-g 1 level "DEBUG" env k fk)))))
+		(d-e-b-u-g 1 level "Core-DEBUG" env k fk)))))
 
 
 
@@ -446,13 +409,13 @@ if not careful end in an infinite loop
 		(d-e-b-u-g 1 (+ 1 level) prompt env k fk)))))
 
 
-
+;; core - should reload core !
 (define (test)
   ;; reloads this file every time ...
-  (load "interpreter.scm") 
+  (load "core.scm") 
   (let ([n 1]
 	[level 1]
-	[prompt "ready"]
+	[prompt "core-ready"]
 	[cont (lambda (x) x)]
 	[fail (lambda (x) (list 'fail x))])
     (r-e-p-l n
